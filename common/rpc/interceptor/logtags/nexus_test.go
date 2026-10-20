@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/server/api/matchingservice/v1"
 	"go.temporal.io/server/common/api"
 	"go.temporal.io/server/common/log/tag"
 )
@@ -16,6 +18,22 @@ func TestNexusStage(t *testing.T) {
 		req    any
 		want   []tag.Tag
 	}{
+		{method: api.WorkflowServicePrefix + "PollNexusTaskQueue", want: []tag.Tag{tag.NexusStageHandlerTaskDelivery}},
+		{method: api.WorkflowServicePrefix + "RespondNexusTaskCompleted", want: []tag.Tag{tag.NexusStageHandlerTaskDelivery}},
+		{method: api.WorkflowServicePrefix + "RespondNexusTaskFailed", want: []tag.Tag{tag.NexusStageHandlerTaskDelivery}},
+		{method: api.MatchingServicePrefix + "DispatchNexusTask", want: []tag.Tag{tag.NexusStageHandlerTaskDelivery}},
+		{method: api.MatchingServicePrefix + "PollNexusTaskQueue", want: []tag.Tag{tag.NexusStageHandlerTaskDelivery}},
+		{method: api.MatchingServicePrefix + "RespondNexusTaskCompleted", want: []tag.Tag{tag.NexusStageHandlerTaskDelivery}},
+		{method: api.MatchingServicePrefix + "RespondNexusTaskFailed", want: []tag.Tag{tag.NexusStageHandlerTaskDelivery}},
+		{
+			method: api.MatchingServicePrefix + "CancelOutstandingPoll",
+			req:    &matchingservice.CancelOutstandingPollRequest{TaskQueueType: enumspb.TASK_QUEUE_TYPE_NEXUS},
+			want:   []tag.Tag{tag.NexusStageHandlerTaskDelivery},
+		},
+		{
+			method: api.MatchingServicePrefix + "CancelOutstandingPoll",
+			req:    &matchingservice.CancelOutstandingPollRequest{TaskQueueType: enumspb.TASK_QUEUE_TYPE_WORKFLOW},
+		},
 		{method: api.HistoryServicePrefix + "CompleteNexusOperation", want: []tag.Tag{tag.NexusStageCallerInbound}},
 		{method: api.HistoryServicePrefix + "CompleteNexusOperationChasm", want: []tag.Tag{tag.NexusStageCallerInbound}},
 		{method: api.NexusServicePrefix + "CompleteNexusOperation", want: []tag.Tag{tag.NexusStageCallerInbound}},
