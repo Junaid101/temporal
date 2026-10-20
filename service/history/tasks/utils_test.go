@@ -40,8 +40,9 @@ func TestTags_NexusStage(t *testing.T) {
 		{name: "HSM Nexus invocation", task: hsmOutbound("nexusoperations.Invocation"), wantStage: "caller-outbound"},
 		{name: "HSM Nexus cancelation", task: hsmOutbound("nexusoperations.Cancelation"), wantStage: "caller-outbound"},
 		{name: "CHASM Nexus operation", task: chasmTask(CategoryOutbound, "nexus"), wantStage: "caller-outbound"},
-		{name: "HSM callback", task: hsmOutbound("callbacks.Invocation")},
-		{name: "CHASM task with an unrelated group", task: chasmTask(CategoryOutbound, "callback.invocation")},
+		{name: "HSM callback", task: hsmOutbound("callbacks.Invocation"), wantStage: "handler-outbound"},
+		{name: "CHASM callback", task: chasmTask(CategoryOutbound, "callback.invoke"), wantStage: "handler-outbound"},
+		{name: "CHASM task with an unrelated group", task: chasmTask(CategoryOutbound, "scheduler.invoke")},
 		{name: "CHASM Nexus group outside the outbound queue", task: chasmTask(CategoryTimer, "nexus")},
 		{name: "worker commands", task: &WorkerCommandsTask{WorkflowKey: workflowKey}},
 	} {

@@ -47,8 +47,8 @@ func Tags(
 
 // nexusStageTag returns the Nexus lifecycle stage of an outbound task. It keys on the outbound task
 // group rather than the task type because CHASM tasks only carry a type ID; the outbound queue resolves
-// their group when it loads them. The group names are defined by the HSM and CHASM Nexus libraries,
-// which this package cannot import.
+// their group when it loads them. The group names are defined by the HSM and CHASM Nexus and callback
+// libraries, which this package cannot import.
 func nexusStageTag(task Task) (tag.Tag, bool) {
 	if task.GetCategory().ID() != CategoryIDOutbound {
 		return nil, false
@@ -60,6 +60,8 @@ func nexusStageTag(task Task) (tag.Tag, bool) {
 	switch group := grouped.OutboundTaskGroup(); {
 	case group == "nexus", strings.HasPrefix(group, "nexusoperations."):
 		return tag.NexusStageCallerOutbound, true
+	case group == "callback.invoke", strings.HasPrefix(group, "callbacks."):
+		return tag.NexusStageHandlerOutbound, true
 	default:
 		return nil, false
 	}
