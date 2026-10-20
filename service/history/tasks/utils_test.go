@@ -13,7 +13,7 @@ func TestTags_NexusStage(t *testing.T) {
 	t.Parallel()
 
 	workflowKey := definition.NewWorkflowKey("ns-id", "wf-id", "run-id")
-	hsmOutbound := func(taskType string) Task {
+	hsmOutboundTask := func(taskType string) Task {
 		return &StateMachineOutboundTask{
 			StateMachineTask: StateMachineTask{
 				WorkflowKey: workflowKey,
@@ -37,13 +37,16 @@ func TestTags_NexusStage(t *testing.T) {
 		task      Task
 		wantStage string
 	}{
-		{name: "HSM Nexus invocation", task: hsmOutbound("nexusoperations.Invocation"), wantStage: "caller-outbound"},
-		{name: "HSM Nexus cancelation", task: hsmOutbound("nexusoperations.Cancelation"), wantStage: "caller-outbound"},
+		// HSM
+		{name: "HSM Nexus invocation", task: hsmOutboundTask("nexusoperations.Invocation"), wantStage: "caller-outbound"},
+		{name: "HSM Nexus cancelation", task: hsmOutboundTask("nexusoperations.Cancelation"), wantStage: "caller-outbound"},
+		{name: "HSM callback", task: hsmOutboundTask("callbacks.Invocation"), wantStage: "handler-outbound"},
+		// CHASM
 		{name: "CHASM Nexus operation", task: chasmTask(CategoryOutbound, "nexus"), wantStage: "caller-outbound"},
-		{name: "HSM callback", task: hsmOutbound("callbacks.Invocation"), wantStage: "handler-outbound"},
 		{name: "CHASM callback", task: chasmTask(CategoryOutbound, "callback.invoke"), wantStage: "handler-outbound"},
 		{name: "CHASM task with an unrelated group", task: chasmTask(CategoryOutbound, "scheduler.invoke")},
 		{name: "CHASM Nexus group outside the outbound queue", task: chasmTask(CategoryTimer, "nexus")},
+		// Other
 		{name: "worker commands", task: &WorkerCommandsTask{WorkflowKey: workflowKey}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
