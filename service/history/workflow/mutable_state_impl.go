@@ -725,6 +725,19 @@ func (ms *MutableStateImpl) chasmCallbacksEnabled() bool {
 	return ms.shard.GetConfig().EnableCHASMCallbacks(ms.GetNamespaceEntry().Name().String())
 }
 
+// chasmOnlyUpdateCallbackRequestIDStorageEnabled returns true when callback request IDs can
+// safely be omitted from legacy WorkflowExecutionState because they are being stored in CHASM.
+func (ms *MutableStateImpl) chasmOnlyUpdateCallbackRequestIDStorageEnabled(
+	completionCallbacks []*commonpb.Callback,
+) bool {
+	if len(completionCallbacks) == 0 || !ms.chasmCallbacksEnabled() {
+		return false
+	}
+	namespaceName := ms.GetNamespaceEntry().Name().String()
+	return ms.config.EnableWorkflowUpdateCallbacks(namespaceName) &&
+		ms.config.EnableCHASMOnlyUpdateCallbackRequestIDs(namespaceName)
+}
+
 // ChasmSignalBacklinksEnabled returns true if CHASM-based signal requestID backlink tracking is enabled.
 func (ms *MutableStateImpl) ChasmSignalBacklinksEnabled() bool {
 	return ms.ChasmEnabled() && ms.shard.GetConfig().EnableCHASMSignalBacklinks(ms.GetNamespaceEntry().Name().String())
@@ -3541,7 +3554,7 @@ func (ms *MutableStateImpl) addUpdateCallbacksChasm(
 	nsName := ms.GetNamespaceEntry().Name().String()
 	maxCallbacksPerWorkflow := ms.config.MaxCallbacksPerWorkflow(nsName)
 	maxCallbacksPerUpdateID := ms.config.MaxCallbacksPerUpdateID(nsName)
-	return wf.AddUpdateCompletionCallbacks(ctx, event.EventTime, updateID, requestID, updateCallbacks, maxCallbacksPerWorkflow, maxCallbacksPerUpdateID)
+	return wf.AddUpdateCompletionCallbacks(ctx, event.EventTime, event.EventType, updateID, requestID, updateCallbacks, maxCallbacksPerWorkflow, maxCallbacksPerUpdateID)
 }
 
 func (ms *MutableStateImpl) addCompletionCallbacks(
@@ -5801,14 +5814,15 @@ func (ms *MutableStateImpl) ApplyWorkflowExecutionUpdateAdmittedEvent(event *his
 	// may have a nil AcceptedRequest (because the UpdateAdmitted event already
 	// contains the request), causing callbacks to be lost at acceptance time.
 	requestID := attrs.GetRequest().GetRequestId()
-	if requestID != "" {
+	completionCallbacks := attrs.GetRequest().GetCompletionCallbacks()
+	if requestID != "" && !ms.chasmOnlyUpdateCallbackRequestIDStorageEnabled(completionCallbacks) {
 		ms.AttachRequestID(requestID, event.EventType, event.EventId)
 	}
 	return ms.addUpdateCallbacks(
 		event,
 		updateID,
 		requestID,
-		attrs.GetRequest().GetCompletionCallbacks(),
+		completionCallbacks,
 	)
 }
 
@@ -5884,14 +5898,15 @@ func (ms *MutableStateImpl) ApplyWorkflowExecutionUpdateAcceptedEvent(
 	// exist from the admitted event.
 	if attrs.GetAcceptedRequest() != nil {
 		requestID := attrs.GetAcceptedRequest().GetRequestId()
-		if requestID != "" {
+		completionCallbacks := attrs.GetAcceptedRequest().GetCompletionCallbacks()
+		if requestID != "" && !ms.chasmOnlyUpdateCallbackRequestIDStorageEnabled(completionCallbacks) {
 			ms.AttachRequestID(requestID, event.EventType, event.EventId)
 		}
 		if err := ms.addUpdateCallbacks(
 			event,
 			updateID,
 			requestID,
-			attrs.GetAcceptedRequest().GetCompletionCallbacks(),
+			completionCallbacks,
 		); err != nil {
 			return err
 		}
@@ -6083,14 +6098,15 @@ func (ms *MutableStateImpl) ApplyWorkflowExecutionOptionsUpdatedEvent(event *his
 	for _, updateOptions := range attributes.GetWorkflowUpdateOptions() {
 		updateID := updateOptions.GetUpdateId()
 		requestID := updateOptions.GetAttachedRequestId()
-		if requestID != "" {
+		completionCallbacks := updateOptions.GetAttachedCompletionCallbacks()
+		if requestID != "" && !ms.chasmOnlyUpdateCallbackRequestIDStorageEnabled(completionCallbacks) {
 			ms.AttachRequestID(requestID, event.EventType, event.EventId)
 		}
 		if err := ms.addUpdateCallbacks(
 			event,
 			updateID,
 			requestID,
-			updateOptions.GetAttachedCompletionCallbacks(),
+			completionCallbacks,
 		); err != nil {
 			return err
 		}

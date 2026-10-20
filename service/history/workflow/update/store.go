@@ -4,6 +4,7 @@ import (
 	"context"
 
 	commonpb "go.temporal.io/api/common/v1"
+	enumspb "go.temporal.io/api/enums/v1"
 	failurepb "go.temporal.io/api/failure/v1"
 	historypb "go.temporal.io/api/history/v1"
 	nexuspb "go.temporal.io/api/nexus/v1"
@@ -75,9 +76,8 @@ type (
 		// clean up the update's mutable-state entry.
 		RejectWorkflowExecutionUpdate(updateID string, rejectionFailure *failurepb.Failure) error
 
-		// HasRequestID checks whether the given requestID has already been
-		// recorded for this workflow execution. Used by AttachCallbacks to deduplicate
-		// callback attachment when the same request is retried.
-		HasRequestID(requestID string) bool
+		// UpdateCallbackRequestIDEventType returns the event type that attached
+		// callbacks for the request ID.
+		UpdateCallbackRequestIDEventType(updateID, requestID string) (enumspb.EventType, bool, error)
 	}
 )

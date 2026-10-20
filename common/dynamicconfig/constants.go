@@ -3489,6 +3489,15 @@ Requires EnableChasm.`,
 the CHASM implementation. When disabled, new update callbacks will not be registered,
 but existing callbacks will still be processed and fired.`,
 	)
+	EnableCHASMOnlyUpdateCallbackRequestIDs = NewNamespaceBoolSetting(
+		"history.enableCHASMOnlyUpdateCallbackRequestIDs",
+		false,
+		`Controls whether workflow Update callback request IDs are stored only in the CHASM
+WorkflowUpdate component instead of being dual-written to WorkflowExecutionState. Requires
+EnableChasm, EnableCHASMCallbacks, and EnableWorkflowUpdateCallbacks. Enable only after all
+History hosts have been upgraded to a version that reads callback request IDs from CHASM and
+the fleet will not roll back to an older version.`,
+	)
 
 	VersionMembershipCacheTTL = NewGlobalDurationSetting(
 		"history.versionMembershipCacheTTL",

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	commonpb "go.temporal.io/api/common/v1"
+	enumspb "go.temporal.io/api/enums/v1"
 	failurepb "go.temporal.io/api/failure/v1"
 	historypb "go.temporal.io/api/history/v1"
 	nexuspb "go.temporal.io/api/nexus/v1"
@@ -110,8 +111,8 @@ type mockEventStore struct {
 		workflowUpdateOptions []*historypb.WorkflowExecutionOptionsUpdatedEventAttributes_WorkflowUpdateOptionsUpdate,
 	) (*historypb.HistoryEvent, error)
 
-	CanAddEventFunc  func() bool
-	HasRequestIDFunc func(requestID string) bool
+	CanAddEventFunc                      func() bool
+	UpdateCallbackRequestIDEventTypeFunc func(updateID, requestID string) (enumspb.EventType, bool, error)
 }
 
 func (m mockEventStore) AddWorkflowExecutionOptionsUpdatedEvent(
@@ -165,9 +166,12 @@ func (m mockEventStore) RejectWorkflowExecutionUpdate(_ string, _ *failurepb.Fai
 	return nil
 }
 
-func (m mockEventStore) HasRequestID(requestID string) bool {
-	if m.HasRequestIDFunc != nil {
-		return m.HasRequestIDFunc(requestID)
+func (m mockEventStore) UpdateCallbackRequestIDEventType(
+	updateID string,
+	requestID string,
+) (enumspb.EventType, bool, error) {
+	if m.UpdateCallbackRequestIDEventTypeFunc != nil {
+		return m.UpdateCallbackRequestIDEventTypeFunc(updateID, requestID)
 	}
-	return false
+	return enumspb.EVENT_TYPE_UNSPECIFIED, false, nil
 }

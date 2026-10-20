@@ -121,7 +121,10 @@ func (u *Updater) ApplyRequest(
 	u.nexusSerializationContext = common.CloneProto(u.upd.NexusSerializationContext())
 	// Capture the anticipated link for the response after the request has been applied.
 	// If the request itself fails/is rejected, OnSuccess will link to the workflow itself instead.
-	u.requestIDLink = u.captureRequestIDLink(ms)
+	u.requestIDLink, err = u.captureRequestIDLink(ctx, ms)
+	if err != nil {
+		return nil, err
+	}
 	return action, nil
 }
 
@@ -260,30 +263,43 @@ func (u *Updater) applyRequest(
 //	    - No: is the Update already completed?
 //	        - Yes: return nil as a hint to OnSuccess to link to the accepted event.
 //	        - No: link to the projected event.
-func (u *Updater) captureRequestIDLink(ms historyi.MutableState) *commonpb.Link {
+func (u *Updater) captureRequestIDLink(ctx context.Context, ms historyi.MutableState) (*commonpb.Link, error) {
 	request := u.req.GetRequest().GetRequest()
 	requestID := request.GetRequestId()
 	if requestID == "" {
-		return nil
+		return nil, nil
 	}
 
 	// If there are no completion callbacks, dont set the
 	// requestIDRef link as it is not guaranteed to resolve.
 	if len(request.CompletionCallbacks) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var eventType enumspb.EventType
 	if requestIDInfo := ms.GetExecutionState().GetRequestIds()[requestID]; requestIDInfo != nil {
 		eventType = requestIDInfo.GetEventType()
 	} else {
-		updateInfo := ms.GetExecutionInfo().GetUpdateInfos()[request.GetMeta().GetUpdateId()]
-		if updateInfo.GetCompletion() != nil {
-			// If the update is already completed, the request's callbacks are not
-			// recorded so the requestIDRef is not captured as it will not resolve.
-			return nil
+		storedEventType, ok, err := workflow.UpdateCallbackRequestIDEventType(
+			ctx,
+			ms,
+			request.GetMeta().GetUpdateId(),
+			requestID,
+		)
+		if err != nil {
+			return nil, err
 		}
-		eventType = u.upd.EventLinkType(requestID)
+		if ok {
+			eventType = storedEventType
+		} else {
+			updateInfo := ms.GetExecutionInfo().GetUpdateInfos()[request.GetMeta().GetUpdateId()]
+			if updateInfo.GetCompletion() != nil {
+				// If the update is already completed, the request's callbacks are not
+				// recorded so the requestIDRef is not captured as it will not resolve.
+				return nil, nil
+			}
+			eventType = u.upd.EventLinkType(requestID)
+		}
 	}
 
 	return &commonpb.Link{
@@ -300,7 +316,7 @@ func (u *Updater) captureRequestIDLink(ms historyi.MutableState) *commonpb.Link 
 				},
 			},
 		},
-	}
+	}, nil
 }
 
 func (u *Updater) OnSuccess(

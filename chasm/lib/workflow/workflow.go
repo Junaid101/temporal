@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	commonpb "go.temporal.io/api/common/v1"
+	enumspb "go.temporal.io/api/enums/v1"
 	failurepb "go.temporal.io/api/failure/v1"
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/api/serviceerror"
@@ -111,6 +112,49 @@ func (w *Workflow) ProcessUpdateCallbacks(ctx chasm.MutableContext, updateID str
 	return callback.ScheduleStandbyCallbacks(ctx, update.Get(ctx).Callbacks)
 }
 
+// UpdateCallbackRequestIDEventType returns the event type that attached callbacks for requestID.
+func (w *Workflow) UpdateCallbackRequestIDEventType(
+	ctx chasm.Context,
+	updateID string,
+	requestID string,
+) (enumspb.EventType, bool) {
+	updateField, ok := w.Updates[updateID]
+	if !ok {
+		return enumspb.EVENT_TYPE_UNSPECIFIED, false
+	}
+	eventType, ok := updateField.Get(ctx).CallbackRequestIdEventTypes[requestID]
+	return eventType, ok
+}
+
+// MigrateUpdateCallbackRequestID records the request ID mapping when an existing callback was
+// written by a server version that stored the mapping only in WorkflowExecutionState.
+func (w *Workflow) MigrateUpdateCallbackRequestID(
+	ctx chasm.MutableContext,
+	updateID string,
+	requestID string,
+	eventType enumspb.EventType,
+) bool {
+	updateField, ok := w.Updates[updateID]
+	if !ok {
+		return false
+	}
+	update := updateField.Get(ctx)
+	if _, ok := update.CallbackRequestIdEventTypes[requestID]; ok {
+		return true
+	}
+	for _, callbackField := range update.Callbacks {
+		if callbackField.Get(ctx).GetRequestId() != requestID {
+			continue
+		}
+		if update.CallbackRequestIdEventTypes == nil {
+			update.CallbackRequestIdEventTypes = make(map[string]enumspb.EventType, 1)
+		}
+		update.CallbackRequestIdEventTypes[requestID] = eventType
+		return true
+	}
+	return false
+}
+
 // RejectUpdate stores the rejection failure on the WorkflowUpdate component and
 // fires any pending callbacks. This is used when a reapplied update (after reset)
 // is rejected by the worker's validator - the callbacks need to deliver the
@@ -213,12 +257,18 @@ func (w *Workflow) AddCompletionCallbacks(
 func (w *Workflow) AddUpdateCompletionCallbacks(
 	ctx chasm.MutableContext,
 	eventTime *timestamppb.Timestamp,
+	eventType enumspb.EventType,
 	updateID string,
 	requestID string,
 	completionCallbacks []*commonpb.Callback,
 	maxCallbacksPerWorkflow int,
 	maxCallbacksPerUpdateID int,
 ) error {
+	if updateField, ok := w.Updates[updateID]; requestID != "" && ok {
+		if _, ok := updateField.Get(ctx).CallbackRequestIdEventTypes[requestID]; ok {
+			return nil
+		}
+	}
 	if err := w.checkWorkflowCallbackLimit(ctx, len(completionCallbacks), maxCallbacksPerWorkflow); err != nil {
 		return err
 	}
@@ -244,7 +294,16 @@ func (w *Workflow) AddUpdateCompletionCallbacks(
 		)
 	}
 
-	return addCallbacksToMap(ctx, update.Callbacks, requestID, eventTime, completionCallbacks)
+	if err := addCallbacksToMap(ctx, update.Callbacks, requestID, eventTime, completionCallbacks); err != nil {
+		return err
+	}
+	if requestID != "" {
+		if update.CallbackRequestIdEventTypes == nil {
+			update.CallbackRequestIdEventTypes = make(map[string]enumspb.EventType, 1)
+		}
+		update.CallbackRequestIdEventTypes[requestID] = eventType
+	}
+	return nil
 }
 
 // addAndApplyHistoryEvent adds a history event to the workflow and applies the corresponding event definition,

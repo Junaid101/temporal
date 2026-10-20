@@ -201,6 +201,47 @@ func (mse MutableStateWithEffects) CanAddEvent() bool {
 	return mse.IsWorkflowExecutionRunning()
 }
 
+// UpdateCallbackRequestIDEventType returns the history event type associated with an update callback request ID.
+func (mse MutableStateWithEffects) UpdateCallbackRequestIDEventType(
+	updateID string,
+	requestID string,
+) (enumspb.EventType, bool, error) {
+	// Callback request IDs were stored in execution state before they moved to the
+	// CHASM WorkflowUpdate component. Honor that state so a retry against an
+	// execution written by an older server is still deduplicated after an upgrade.
+	// Check it first because older executions may not have a CHASM Workflow root.
+	if requestIDInfo := mse.GetExecutionState().GetRequestIds()[requestID]; requestIDInfo != nil {
+		if mse.ChasmEnabled() {
+			if wf, chasmCtx, err := mse.ChasmWorkflowComponent(context.Background()); err == nil {
+				wf.MigrateUpdateCallbackRequestID(
+					chasmCtx,
+					updateID,
+					requestID,
+					requestIDInfo.GetEventType(),
+				)
+			}
+		}
+		return requestIDInfo.GetEventType(), true, nil
+	}
+
+	return UpdateCallbackRequestIDEventType(context.Background(), mse.MutableState, updateID, requestID)
+}
+
+// UpdateCallbackRequestIDEventType reads the callback request ID mapping from a CHASM WorkflowUpdate component.
+func UpdateCallbackRequestIDEventType(
+	ctx context.Context,
+	mutableState historyi.MutableState,
+	updateID string,
+	requestID string,
+) (enumspb.EventType, bool, error) {
+	wf, chasmCtx, err := mutableState.ChasmWorkflowComponentReadOnly(ctx)
+	if err != nil {
+		return enumspb.EVENT_TYPE_UNSPECIFIED, false, err
+	}
+	eventType, ok := wf.UpdateCallbackRequestIDEventType(chasmCtx, updateID, requestID)
+	return eventType, ok, nil
+}
+
 // GetEffectiveDeployment returns the effective deployment in the following order:
 //  1. DeploymentVersionTransition.Deployment: this is returned when the wf is transitioning to a
 //     new deployment

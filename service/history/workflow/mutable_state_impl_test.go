@@ -34,6 +34,7 @@ import (
 	taskqueuespb "go.temporal.io/server/api/taskqueue/v1"
 	tokenspb "go.temporal.io/server/api/token/v1"
 	"go.temporal.io/server/chasm"
+	chasmcallback "go.temporal.io/server/chasm/lib/callback"
 	chasmnexus "go.temporal.io/server/chasm/lib/nexusoperation"
 	"go.temporal.io/server/chasm/lib/nexusoperation/gen/nexusoperationpb/v1"
 	chasmworkflow "go.temporal.io/server/chasm/lib/workflow"
@@ -3129,6 +3130,128 @@ func (s *mutableStateSuite) TestApplyWorkflowExecutionStartedEvent_PersistsChasm
 			s.NotEqual(common.EmptyVersion, rootNode.GetMetadata().GetInitialVersionedTransition().GetNamespaceFailoverVersion())
 			protorequire.ProtoEqual(s.T(), ms.CurrentVersionedTransition(), rootNode.GetMetadata().GetInitialVersionedTransition())
 			protorequire.ProtoEqual(s.T(), ms.CurrentVersionedTransition(), rootNode.GetMetadata().GetLastUpdateVersionedTransition())
+		})
+	}
+}
+
+func (s *mutableStateSuite) TestApplyUpdateAcceptedEventReconstructsCHASMRequestIDDuringTransition() {
+	registry := chasm.NewRegistry(s.logger)
+	s.NoError(registry.Register(&chasm.CoreLibrary{}))
+	s.NoError(registry.Register(chasmcallback.NewNilLibrary()))
+	s.NoError(registry.Register(chasmworkflow.NewLibrary(chasmworkflow.NewRegistry())))
+	s.mockShard.SetChasmRegistry(registry)
+	s.mockConfig.EnableChasm = dynamicconfig.GetBoolPropertyFnFilteredByNamespace(true)
+	s.mockConfig.EnableCHASMWorkflowRootOnStart = dynamicconfig.GetBoolPropertyFnFilteredByNamespace(true)
+	s.mockEventsCache.EXPECT().PutEvent(gomock.Any(), gomock.Any()).AnyTimes()
+
+	for _, tc := range []struct {
+		name                      string
+		enableCHASMCallbacks      bool
+		enableUpdateCallbacks     bool
+		chasmOnlyRequestIDStorage bool
+		wantLegacyRequestID       bool
+		wantCHASMRequestID        bool
+		testLazyMigration         bool
+	}{
+		{
+			name:                  "transition dual-write",
+			enableCHASMCallbacks:  true,
+			enableUpdateCallbacks: true,
+			wantLegacyRequestID:   true,
+			wantCHASMRequestID:    true,
+			testLazyMigration:     true,
+		},
+		{
+			name:                      "post-transition CHASM-only",
+			enableCHASMCallbacks:      true,
+			enableUpdateCallbacks:     true,
+			chasmOnlyRequestIDStorage: true,
+			wantCHASMRequestID:        true,
+		},
+		{
+			name:                      "CHASM callbacks disabled preserves legacy write",
+			enableUpdateCallbacks:     true,
+			chasmOnlyRequestIDStorage: true,
+			wantLegacyRequestID:       true,
+		},
+		{
+			name:                      "Update callbacks disabled preserves legacy write",
+			enableCHASMCallbacks:      true,
+			chasmOnlyRequestIDStorage: true,
+			wantLegacyRequestID:       true,
+		},
+	} {
+		s.Run(tc.name, func() {
+			s.mockConfig.EnableCHASMCallbacks =
+				dynamicconfig.GetBoolPropertyFnFilteredByNamespace(tc.enableCHASMCallbacks)
+			s.mockConfig.EnableWorkflowUpdateCallbacks =
+				dynamicconfig.GetBoolPropertyFnFilteredByNamespace(tc.enableUpdateCallbacks)
+			s.mockConfig.EnableCHASMOnlyUpdateCallbackRequestIDs =
+				dynamicconfig.GetBoolPropertyFnFilteredByNamespace(tc.chasmOnlyRequestIDStorage)
+			ms := NewMutableState(
+				s.mockShard,
+				s.mockEventsCache,
+				s.logger,
+				s.namespaceEntry,
+				tests.WorkflowID,
+				tests.RunID,
+				time.Now().UTC(),
+			)
+			_, err := ms.AddWorkflowExecutionStartedEvent(
+				&commonpb.WorkflowExecution{WorkflowId: tests.WorkflowID, RunId: tests.RunID},
+				&historyservice.StartWorkflowExecutionRequest{StartRequest: &workflowservice.StartWorkflowExecutionRequest{}},
+			)
+			s.NoError(err)
+
+			const (
+				updateID  = "transition-update-id"
+				requestID = "transition-request-id"
+			)
+			event := &historypb.HistoryEvent{
+				EventId:   2,
+				EventTime: timestamppb.Now(),
+				EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED,
+				Attributes: &historypb.HistoryEvent_WorkflowExecutionUpdateAcceptedEventAttributes{
+					WorkflowExecutionUpdateAcceptedEventAttributes: &historypb.WorkflowExecutionUpdateAcceptedEventAttributes{
+						ProtocolInstanceId: updateID,
+						AcceptedRequest: &updatepb.Request{
+							Meta:      &updatepb.Meta{UpdateId: updateID},
+							RequestId: requestID,
+							CompletionCallbacks: []*commonpb.Callback{{
+								Variant: &commonpb.Callback_Nexus_{Nexus: &commonpb.Callback_Nexus{Url: "http://localhost/callback"}},
+							}},
+						},
+					},
+				},
+			}
+			s.NoError(ms.ApplyWorkflowExecutionUpdateAcceptedEvent(event))
+
+			_, legacyRequestIDFound := ms.GetExecutionState().GetRequestIds()[requestID]
+			s.Equal(tc.wantLegacyRequestID, legacyRequestIDFound)
+			eventType, found, err := UpdateCallbackRequestIDEventType(context.Background(), ms, updateID, requestID)
+			s.NoError(err)
+			s.Equal(tc.wantCHASMRequestID, found)
+			if tc.wantCHASMRequestID {
+				s.Equal(enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED, eventType)
+			}
+
+			if tc.testLazyMigration {
+				wf, chasmCtx, err := ms.ChasmWorkflowComponent(context.Background())
+				s.NoError(err)
+				wf.Updates[updateID].Get(chasmCtx).CallbackRequestIdEventTypes = nil
+
+				eventType, found, err = (MutableStateWithEffects{MutableState: ms}).UpdateCallbackRequestIDEventType(
+					updateID,
+					requestID,
+				)
+				s.NoError(err)
+				s.True(found)
+				s.Equal(enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED, eventType)
+
+				eventType, found = wf.UpdateCallbackRequestIDEventType(chasmCtx, updateID, requestID)
+				s.True(found, "legacy lookup should backfill the CHASM request ID mapping")
+				s.Equal(enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED, eventType)
+			}
 		})
 	}
 }

@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	commonpb "go.temporal.io/api/common/v1"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/server/chasm"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -82,6 +83,7 @@ func TestAddUpdateCompletionCallbacks_LimitsExceeded(t *testing.T) {
 			require.NoError(t, wf.AddUpdateCompletionCallbacks(
 				ctx,
 				eventTime,
+				enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED,
 				test.firstUpdateID,
 				"req-1",
 				test.firstCallbacks,
@@ -93,6 +95,7 @@ func TestAddUpdateCompletionCallbacks_LimitsExceeded(t *testing.T) {
 			err := wf.AddUpdateCompletionCallbacks(
 				ctx,
 				eventTime,
+				enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED,
 				test.secondUpdateID,
 				"req-2",
 				test.secondCallbacks,
@@ -112,4 +115,73 @@ func TestAddUpdateCompletionCallbacks_LimitsExceeded(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAddUpdateCompletionCallbacksDeduplicatesRequestID(t *testing.T) {
+	t.Parallel()
+
+	ctx := &chasm.MockMutableContext{}
+	wf := &Workflow{MSPointer: chasm.NewMSPointer(&chasm.MockNodeBackend{})}
+	callbacks := []*commonpb.Callback{nexusCallback("http://callback")}
+
+	require.NoError(t, wf.AddUpdateCompletionCallbacks(
+		ctx,
+		timestamppb.Now(),
+		enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED,
+		"update-id",
+		"request-id",
+		callbacks,
+		1,
+		1,
+	))
+	require.NoError(t, wf.AddUpdateCompletionCallbacks(
+		ctx,
+		timestamppb.Now(),
+		enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED,
+		"update-id",
+		"request-id",
+		callbacks,
+		1,
+		1,
+	))
+
+	eventType, ok := wf.UpdateCallbackRequestIDEventType(ctx, "update-id", "request-id")
+	require.True(t, ok)
+	require.Equal(t, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED, eventType)
+	require.Len(t, wf.Updates["update-id"].Get(ctx).Callbacks, 1)
+}
+
+func TestMigrateUpdateCallbackRequestID(t *testing.T) {
+	t.Parallel()
+
+	ctx := &chasm.MockMutableContext{}
+	wf := &Workflow{MSPointer: chasm.NewMSPointer(&chasm.MockNodeBackend{})}
+	require.NoError(t, wf.AddUpdateCompletionCallbacks(
+		ctx,
+		timestamppb.Now(),
+		enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED,
+		"update-id",
+		"legacy-request-id",
+		[]*commonpb.Callback{nexusCallback("http://callback")},
+		1,
+		1,
+	))
+	update := wf.Updates["update-id"].Get(ctx)
+	update.CallbackRequestIdEventTypes = nil // Simulate a snapshot written before the CHASM mapping existed.
+
+	require.False(t, wf.MigrateUpdateCallbackRequestID(
+		ctx,
+		"update-id",
+		"different-request-id",
+		enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED,
+	))
+	require.True(t, wf.MigrateUpdateCallbackRequestID(
+		ctx,
+		"update-id",
+		"legacy-request-id",
+		enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED,
+	))
+	eventType, ok := wf.UpdateCallbackRequestIDEventType(ctx, "update-id", "legacy-request-id")
+	require.True(t, ok)
+	require.Equal(t, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED, eventType)
 }

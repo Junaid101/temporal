@@ -24,9 +24,12 @@ import (
 	nexuspb "go.temporal.io/api/nexus/v1"
 	"go.temporal.io/api/operatorservice/v1"
 	taskqueuepb "go.temporal.io/api/taskqueue/v1"
+	updatepb "go.temporal.io/api/update/v1"
 	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	sdkclient "go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 	"go.temporal.io/server/api/adminservice/v1"
 	"go.temporal.io/server/chasm"
 	"go.temporal.io/server/chasm/lib/callback"
@@ -124,6 +127,97 @@ func (s *NexusStateReplicationSuite) SetupTest() {
 
 func (s *NexusStateReplicationSuite) TearDownSuite() {
 	s.tearDownSuite()
+}
+
+func (s *NexusStateReplicationSuite) TestWorkflowUpdateCallbackRequestIDReplicated() {
+	if !s.chasmEnabled {
+		s.T().Skip("workflow Update callback request IDs are stored in CHASM")
+	}
+
+	for _, cluster := range s.clusters {
+		cluster.OverrideDynamicConfig(s.T(), dynamicconfig.EnableWorkflowUpdateCallbacks, true)
+		cluster.OverrideDynamicConfig(s.T(), dynamicconfig.EnableCHASMOnlyUpdateCallbackRequestIDs, true)
+	}
+
+	ctx := testcore.NewContext()
+	ns := s.createGlobalNamespace()
+	clients := make([]sdkclient.Client, len(s.clusters))
+	workers := make([]worker.Worker, len(s.clusters))
+	taskQueue := "update-callback-request-id-replication"
+	workflowID := "update-callback-request-id-replication"
+	updateID := "update-id"
+	requestID := "request-id"
+
+	wf := func(ctx workflow.Context) error {
+		if err := workflow.SetUpdateHandler(ctx, "update", func(ctx workflow.Context) error {
+			workflow.GetSignalChannel(ctx, "complete-update").Receive(ctx, nil)
+			return nil
+		}); err != nil {
+			return err
+		}
+		workflow.GetSignalChannel(ctx, "stop").Receive(ctx, nil)
+		return nil
+	}
+
+	for i, cluster := range s.clusters {
+		client, err := sdkclient.Dial(sdkclient.Options{
+			HostPort:  cluster.Host().FrontendGRPCAddress(),
+			Namespace: ns,
+		})
+		s.NoError(err)
+		s.T().Cleanup(client.Close)
+		clients[i] = client
+		workers[i] = worker.New(client, taskQueue, worker.Options{})
+		workers[i].RegisterWorkflow(wf)
+		s.NoError(workers[i].Start())
+		s.T().Cleanup(workers[i].Stop)
+	}
+
+	run, err := clients[0].ExecuteWorkflow(ctx, sdkclient.StartWorkflowOptions{
+		ID:        workflowID,
+		TaskQueue: taskQueue,
+	}, wf)
+	s.NoError(err)
+
+	request := &workflowservice.UpdateWorkflowExecutionRequest{
+		Namespace:         ns,
+		WorkflowExecution: &commonpb.WorkflowExecution{WorkflowId: workflowID, RunId: run.GetRunID()},
+		WaitPolicy:        &updatepb.WaitPolicy{LifecycleStage: enumspb.UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ACCEPTED},
+		Request: &updatepb.Request{
+			Meta:      &updatepb.Meta{UpdateId: updateID},
+			Input:     &updatepb.Input{Name: "update"},
+			RequestId: requestID,
+			CompletionCallbacks: []*commonpb.Callback{{
+				Variant: &commonpb.Callback_Nexus_{Nexus: &commonpb.Callback_Nexus{Url: "http://localhost:9999/callback"}},
+			}},
+		},
+	}
+	_, err = s.clusters[0].FrontendClient().UpdateWorkflowExecution(ctx, request)
+	s.NoError(err)
+
+	assertOneUpdateCallback := func(clusterIndex int) bool {
+		response, err := clients[clusterIndex].DescribeWorkflowExecution(ctx, workflowID, run.GetRunID())
+		if err != nil {
+			return false
+		}
+		callbackCount := 0
+		for _, cb := range response.GetCallbacks() {
+			if cb.GetTrigger().GetUpdateWorkflowExecutionCompleted() != nil {
+				callbackCount++
+			}
+		}
+		return callbackCount == 1
+	}
+	await.RequireTrue(s.T(), func() bool { return assertOneUpdateCallback(1) }, 20*time.Second, 100*time.Millisecond)
+
+	s.failover(ns, 0, s.clusters[1].ClusterName(), 2)
+	_, err = s.clusters[1].FrontendClient().UpdateWorkflowExecution(ctx, request)
+	s.NoError(err)
+	await.RequireTrue(s.T(), func() bool { return assertOneUpdateCallback(1) }, 20*time.Second, 100*time.Millisecond)
+
+	s.NoError(clients[1].SignalWorkflow(ctx, workflowID, run.GetRunID(), "complete-update", nil))
+	s.NoError(clients[1].SignalWorkflow(ctx, workflowID, run.GetRunID(), "stop", nil))
+	s.NoError(clients[1].GetWorkflow(ctx, workflowID, run.GetRunID()).Get(ctx, nil))
 }
 
 // TestNexusOperationEventsReplicated tests that nexus related operation events and state updates are replicated

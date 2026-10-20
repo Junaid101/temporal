@@ -88,6 +88,7 @@ type Config struct {
 	EnableCHASMSignalBacklinks                 dynamicconfig.BoolPropertyFnWithNamespaceFilter
 	EnableCHASMWorkflowRootOnStart             dynamicconfig.BoolPropertyFnWithNamespaceFilter
 	EnableWorkflowUpdateCallbacks              dynamicconfig.BoolPropertyFnWithNamespaceFilter
+	EnableCHASMOnlyUpdateCallbackRequestIDs    dynamicconfig.BoolPropertyFnWithNamespaceFilter
 	ChasmMaxInMemoryPureTasks                  dynamicconfig.IntPropertyFn
 	ChasmLogicalTaskCountAlertThreshold        dynamicconfig.IntPropertyFnWithChasmTaskTypeFilter
 	ChasmDLQScheduledPureTaskOnValidation      dynamicconfig.BoolPropertyFnWithNamespaceFilter
@@ -566,11 +567,12 @@ func NewConfig(
 		EnableCHASMSchedulerCreation:  dynamicconfig.EnableCHASMSchedulerCreation.Get(dc),
 		EnableCHASMSchedulerMigration: dynamicconfig.EnableCHASMSchedulerMigration.Get(dc),
 
-		EnableCHASMCallbacks:           dynamicconfig.EnableCHASMCallbacks.Get(dc),
-		EnableCHASMSignalBacklinks:     dynamicconfig.EnableCHASMSignalBacklinks.Get(dc),
-		EnableCHASMWorkflowRootOnStart: dynamicconfig.EnableCHASMWorkflowRootOnStart.Get(dc),
-		ExternalPayloadsEnabled:        dynamicconfig.ExternalPayloadsEnabled.Get(dc),
-		EnableWorkflowUpdateCallbacks:  dynamicconfig.EnableWorkflowUpdateCallbacks.Get(dc),
+		EnableCHASMCallbacks:                    dynamicconfig.EnableCHASMCallbacks.Get(dc),
+		EnableCHASMSignalBacklinks:              dynamicconfig.EnableCHASMSignalBacklinks.Get(dc),
+		EnableCHASMWorkflowRootOnStart:          dynamicconfig.EnableCHASMWorkflowRootOnStart.Get(dc),
+		ExternalPayloadsEnabled:                 dynamicconfig.ExternalPayloadsEnabled.Get(dc),
+		EnableWorkflowUpdateCallbacks:           dynamicconfig.EnableWorkflowUpdateCallbacks.Get(dc),
+		EnableCHASMOnlyUpdateCallbackRequestIDs: dynamicconfig.EnableCHASMOnlyUpdateCallbackRequestIDs.Get(dc),
 
 		EventsShardLevelCacheMaxSizeBytes: dynamicconfig.EventsCacheMaxSizeBytes.Get(dc),          // 512KB
 		EventsHostLevelCacheMaxSizeBytes:  dynamicconfig.EventsHostLevelCacheMaxSizeBytes.Get(dc), // 256MB

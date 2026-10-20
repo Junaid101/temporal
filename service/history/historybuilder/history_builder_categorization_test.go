@@ -248,10 +248,10 @@ func TestHistoryBuilder_FlushBufferToCurrentBatch(t *testing.T) {
 		}
 	})
 
-	t.Run("per-update requestID should be wired into requestIDToEventID map after flush", func(t *testing.T) {
+	t.Run("per-update requestID should not be wired into requestIDToEventID map after flush", func(t *testing.T) {
 		nextEventID := int64(12)
 		hb := newHistoryBuilderFromConfig(builderConfig{nextEventId: nextEventID})
-		// A duplicate Update records its requestID per update, not in AttachedRequestId.
+		// The per-update callback request ID is carried in WorkflowUpdateOptions, not the event-level AttachedRequestId.
 		optionsEvent := hb.AddWorkflowExecutionOptionsUpdatedEvent(
 			nil, false, "", nil, nil, "", nil, nil, false,
 			[]*historypb.WorkflowExecutionOptionsUpdatedEventAttributes_WorkflowUpdateOptionsUpdate{{
@@ -263,7 +263,7 @@ func TestHistoryBuilder_FlushBufferToCurrentBatch(t *testing.T) {
 
 		_, requestIDToEventID := hb.FlushBufferToCurrentBatch()
 		require.Equal(t, nextEventID, optionsEvent.EventId, "options event must be updated after flushing buffer")
-		require.Equal(t, nextEventID, requestIDToEventID["update-request-id"], "requestID must be present in requestIDToEventID after flush")
+		require.NotContains(t, requestIDToEventID, "update-request-id")
 	})
 
 	t.Run("when there is ACTIVITY_TASK_COMPLETED event will move it to the end", func(t *testing.T) {

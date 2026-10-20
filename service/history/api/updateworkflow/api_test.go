@@ -13,6 +13,9 @@ import (
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/server/api/historyservice/v1"
 	persistencespb "go.temporal.io/server/api/persistence/v1"
+	"go.temporal.io/server/chasm"
+	chasmworkflow "go.temporal.io/server/chasm/lib/workflow"
+	chasmworkflowpb "go.temporal.io/server/chasm/lib/workflow/gen/workflowpb/v1"
 	"go.temporal.io/server/common"
 	"go.temporal.io/server/common/definition"
 	historyi "go.temporal.io/server/service/history/interfaces"
@@ -37,6 +40,7 @@ func TestRequestIDLinkSelectionForDuplicates(t *testing.T) {
 		setCallbacks      bool
 		setRequestID      bool
 		requestIDEventID  int64
+		chasmEventType    enumspb.EventType
 		stageAtCapture    enumspb.UpdateWorkflowExecutionLifecycleStage
 		stageAtResponse   enumspb.UpdateWorkflowExecutionLifecycleStage
 		rejected          bool
@@ -45,11 +49,13 @@ func TestRequestIDLinkSelectionForDuplicates(t *testing.T) {
 	}{
 		{name: "admitted with callbacks - requestID link", stageAtResponse: admitted, stageAtCapture: admitted, setCallbacks: true, setRequestID: true, wantRequestIDLink: true},
 		{name: "admitted without callbacks - acceptedEvent link", stageAtResponse: admitted, stageAtCapture: admitted, setRequestID: true},
-		{name: "accepted with buffered callback attachment - requestID link", stageAtResponse: accepted, stageAtCapture: accepted, setCallbacks: true, setRequestID: true, requestIDEventID: common.BufferedEventID, wantRequestIDLink: true},
+		{name: "accepted with buffered callback attachment - requestID link", stageAtResponse: accepted, stageAtCapture: accepted, setCallbacks: true, setRequestID: true, chasmEventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED, wantRequestIDLink: true},
 		{name: "accepted without callbacks - acceptedEvent link", stageAtResponse: accepted, stageAtCapture: accepted, setRequestID: true},
 		{name: "rejected with callbacks - workflow link", stageAtResponse: completed, stageAtCapture: admitted, rejected: true, setCallbacks: true, setRequestID: true, wantRequestIDLink: true},
 		{name: "rejected without callbacks - workflow link", stageAtResponse: completed, stageAtCapture: admitted, rejected: true, setRequestID: true},
-		{name: "completed after callback attachment - requestID link", stageAtResponse: completed, stageAtCapture: completed, setCallbacks: true, setRequestID: true, requestIDEventID: callbackAttachmentEventID, wantRequestIDLink: true},
+		{name: "completed after callback attachment - requestID link", stageAtResponse: completed, stageAtCapture: completed, setCallbacks: true, setRequestID: true, chasmEventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED, wantRequestIDLink: true},
+		{name: "accepted with initial callback - requestID link", stageAtResponse: accepted, stageAtCapture: accepted, setCallbacks: true, setRequestID: true, chasmEventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED, wantRequestIDLink: true},
+		{name: "accepted with legacy callback request ID - requestID link", stageAtResponse: accepted, stageAtCapture: accepted, setCallbacks: true, setRequestID: true, requestIDEventID: callbackAttachmentEventID, wantRequestIDLink: true},
 		{name: "completed before duplicate arrives - acceptedEvent link", stageAtResponse: completed, stageAtCapture: completed, setCallbacks: true, setRequestID: true},
 		{name: "accepted after projected callback attachment - requestID link", stageAtResponse: accepted, stageAtCapture: admitted, setCallbacks: true, setRequestID: true, wantRequestIDLink: true},
 		{name: "no callbacks with existing mapping - acceptedEvent link", stageAtResponse: accepted, stageAtCapture: accepted, setRequestID: true, requestIDEventID: callbackAttachmentEventID},
@@ -107,21 +113,40 @@ func TestRequestIDLinkSelectionForDuplicates(t *testing.T) {
 				}
 				ms.EXPECT().GetExecutionState().Return(state)
 				if tc.requestIDEventID == common.EmptyEventID {
-					info := &persistencespb.UpdateInfo{}
-					switch tc.stageAtCapture {
-					case admitted:
-					case completed:
-						info.Value = &persistencespb.UpdateInfo_Completion{Completion: &persistencespb.UpdateCompletionInfo{}}
-					case accepted:
-						info.Value = &persistencespb.UpdateInfo_Acceptance{Acceptance: &persistencespb.UpdateAcceptanceInfo{EventId: acceptedEventID}}
-					default:
-						require.FailNow(t, "unexpected capture stage", "%v", tc.stageAtCapture)
+					wf := &chasmworkflow.Workflow{}
+					if tc.chasmEventType != enumspb.EVENT_TYPE_UNSPECIFIED {
+						updateComponent := &chasmworkflow.WorkflowUpdate{
+							UpdateState: &chasmworkflowpb.UpdateState{
+								UpdateId: updateID,
+								CallbackRequestIdEventTypes: map[string]enumspb.EventType{
+									requestID: tc.chasmEventType,
+								},
+							},
+						}
+						wf.Updates = chasm.Map[string, *chasmworkflow.WorkflowUpdate]{
+							updateID: chasm.NewComponentField(&chasm.MockMutableContext{}, updateComponent),
+						}
 					}
-					ms.EXPECT().GetExecutionInfo().Return(&persistencespb.WorkflowExecutionInfo{UpdateInfos: map[string]*persistencespb.UpdateInfo{updateID: info}})
+					ms.EXPECT().ChasmWorkflowComponentReadOnly(gomock.Any()).Return(wf, &chasm.MockContext{}, nil)
+					if tc.chasmEventType == enumspb.EVENT_TYPE_UNSPECIFIED {
+						info := &persistencespb.UpdateInfo{}
+						switch tc.stageAtCapture {
+						case admitted:
+						case completed:
+							info.Value = &persistencespb.UpdateInfo_Completion{Completion: &persistencespb.UpdateCompletionInfo{}}
+						case accepted:
+							info.Value = &persistencespb.UpdateInfo_Acceptance{Acceptance: &persistencespb.UpdateAcceptanceInfo{EventId: acceptedEventID}}
+						default:
+							require.FailNow(t, "unexpected capture stage", "%v", tc.stageAtCapture)
+						}
+						ms.EXPECT().GetExecutionInfo().Return(&persistencespb.WorkflowExecutionInfo{UpdateInfos: map[string]*persistencespb.UpdateInfo{updateID: info}})
+					}
 				}
 			}
 
-			u.requestIDLink = u.captureRequestIDLink(ms)
+			var err error
+			u.requestIDLink, err = u.captureRequestIDLink(context.Background(), ms)
+			require.NoError(t, err)
 			require.Equal(t, tc.wantRequestIDLink, u.requestIDLink != nil)
 			link := u.responseLink(&update.Status{Stage: tc.stageAtResponse, Outcome: outcome})
 
@@ -146,7 +171,11 @@ func TestRequestIDLinkSelectionForDuplicates(t *testing.T) {
 				ref := link.GetWorkflowEvent().GetRequestIdRef()
 				require.NotNil(t, ref)
 				require.Equal(t, requestID, ref.GetRequestId())
-				require.Equal(t, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED, ref.GetEventType())
+				wantEventType := enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED
+				if tc.chasmEventType != enumspb.EVENT_TYPE_UNSPECIFIED {
+					wantEventType = tc.chasmEventType
+				}
+				require.Equal(t, wantEventType, ref.GetEventType())
 			} else {
 				ref := link.GetWorkflowEvent().GetEventRef()
 				require.NotNil(t, ref)

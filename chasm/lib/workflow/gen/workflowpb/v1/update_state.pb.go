@@ -11,6 +11,7 @@ import (
 	sync "sync"
 	unsafe "unsafe"
 
+	v11 "go.temporal.io/api/enums/v1"
 	v1 "go.temporal.io/api/failure/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -29,8 +30,10 @@ type UpdateState struct {
 	// Populated when the update was rejected by a validator.
 	// Used to resolve the update outcome for callbacks on rejected updates.
 	RejectionFailure *v1.Failure `protobuf:"bytes,2,opt,name=rejection_failure,json=rejectionFailure,proto3" json:"rejection_failure,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Event types for the history events that attached callbacks, keyed by request ID.
+	CallbackRequestIdEventTypes map[string]v11.EventType `protobuf:"bytes,3,rep,name=callback_request_id_event_types,json=callbackRequestIdEventTypes,proto3" json:"callback_request_id_event_types,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value,enum=temporal.api.enums.v1.EventType"`
+	unknownFields               protoimpl.UnknownFields
+	sizeCache                   protoimpl.SizeCache
 }
 
 func (x *UpdateState) Reset() {
@@ -77,14 +80,25 @@ func (x *UpdateState) GetRejectionFailure() *v1.Failure {
 	return nil
 }
 
+func (x *UpdateState) GetCallbackRequestIdEventTypes() map[string]v11.EventType {
+	if x != nil {
+		return x.CallbackRequestIdEventTypes
+	}
+	return nil
+}
+
 var File_temporal_server_chasm_lib_workflow_proto_v1_update_state_proto protoreflect.FileDescriptor
 
 const file_temporal_server_chasm_lib_workflow_proto_v1_update_state_proto_rawDesc = "" +
 	"\n" +
-	">temporal/server/chasm/lib/workflow/proto/v1/update_state.proto\x12+temporal.server.chasm.lib.workflow.proto.v1\x1a%temporal/api/failure/v1/message.proto\"y\n" +
+	">temporal/server/chasm/lib/workflow/proto/v1/update_state.proto\x12+temporal.server.chasm.lib.workflow.proto.v1\x1a%temporal/api/failure/v1/message.proto\x1a&temporal/api/enums/v1/event_type.proto\"\x8d\x03\n" +
 	"\vUpdateState\x12\x1b\n" +
 	"\tupdate_id\x18\x01 \x01(\tR\bupdateId\x12M\n" +
-	"\x11rejection_failure\x18\x02 \x01(\v2 .temporal.api.failure.v1.FailureR\x10rejectionFailureBDZBgo.temporal.io/server/chasm/lib/workflow/gen/workflowpb;workflowpbb\x06proto3"
+	"\x11rejection_failure\x18\x02 \x01(\v2 .temporal.api.failure.v1.FailureR\x10rejectionFailure\x12\x9f\x01\n" +
+	"\x1fcallback_request_id_event_types\x18\x03 \x03(\v2Y.temporal.server.chasm.lib.workflow.proto.v1.UpdateState.CallbackRequestIdEventTypesEntryR\x1bcallbackRequestIdEventTypes\x1ap\n" +
+	" CallbackRequestIdEventTypesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x126\n" +
+	"\x05value\x18\x02 \x01(\x0e2 .temporal.api.enums.v1.EventTypeR\x05value:\x028\x01BDZBgo.temporal.io/server/chasm/lib/workflow/gen/workflowpb;workflowpbb\x06proto3"
 
 var (
 	file_temporal_server_chasm_lib_workflow_proto_v1_update_state_proto_rawDescOnce sync.Once
@@ -98,18 +112,22 @@ func file_temporal_server_chasm_lib_workflow_proto_v1_update_state_proto_rawDesc
 	return file_temporal_server_chasm_lib_workflow_proto_v1_update_state_proto_rawDescData
 }
 
-var file_temporal_server_chasm_lib_workflow_proto_v1_update_state_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_temporal_server_chasm_lib_workflow_proto_v1_update_state_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_temporal_server_chasm_lib_workflow_proto_v1_update_state_proto_goTypes = []any{
 	(*UpdateState)(nil), // 0: temporal.server.chasm.lib.workflow.proto.v1.UpdateState
-	(*v1.Failure)(nil),  // 1: temporal.api.failure.v1.Failure
+	nil,                 // 1: temporal.server.chasm.lib.workflow.proto.v1.UpdateState.CallbackRequestIdEventTypesEntry
+	(*v1.Failure)(nil),  // 2: temporal.api.failure.v1.Failure
+	(v11.EventType)(0),  // 3: temporal.api.enums.v1.EventType
 }
 var file_temporal_server_chasm_lib_workflow_proto_v1_update_state_proto_depIdxs = []int32{
-	1, // 0: temporal.server.chasm.lib.workflow.proto.v1.UpdateState.rejection_failure:type_name -> temporal.api.failure.v1.Failure
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	2, // 0: temporal.server.chasm.lib.workflow.proto.v1.UpdateState.rejection_failure:type_name -> temporal.api.failure.v1.Failure
+	1, // 1: temporal.server.chasm.lib.workflow.proto.v1.UpdateState.callback_request_id_event_types:type_name -> temporal.server.chasm.lib.workflow.proto.v1.UpdateState.CallbackRequestIdEventTypesEntry
+	3, // 2: temporal.server.chasm.lib.workflow.proto.v1.UpdateState.CallbackRequestIdEventTypesEntry.value:type_name -> temporal.api.enums.v1.EventType
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_temporal_server_chasm_lib_workflow_proto_v1_update_state_proto_init() }
@@ -123,7 +141,7 @@ func file_temporal_server_chasm_lib_workflow_proto_v1_update_state_proto_init() 
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_temporal_server_chasm_lib_workflow_proto_v1_update_state_proto_rawDesc), len(file_temporal_server_chasm_lib_workflow_proto_v1_update_state_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   1,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -18,6 +18,8 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
+	"go.temporal.io/server/api/adminservice/v1"
+	"go.temporal.io/server/chasm"
 	"go.temporal.io/server/chasm/lib/callback"
 	"go.temporal.io/server/common/dynamicconfig"
 	"go.temporal.io/server/common/testing/parallelsuite"
@@ -386,17 +388,32 @@ func (s *UpdateWorkflowSdkSuite) pollUpdate(env *testcore.TestEnv, waitPolicy *u
 	})
 }
 
-// TestUpdateSameRequestIDDeduplicatesCallbacks verifies requestID-based
-// deduplication in AttachCallbacks. The update blocks (stays in stateAccepted), then:
+// TestUpdateSameRequestIDDeduplicatesCallbacks verifies requestID-based deduplication while
+// request IDs are dual-written to legacy execution state during the transition phase.
+func (s *UpdateWorkflowSdkSuite) TestUpdateSameRequestIDDeduplicatesCallbacks() {
+	s.testUpdateSameRequestIDDeduplicatesCallbacks(false)
+}
+
+// TestUpdateSameRequestIDDeduplicatesCallbacksCHASMOnly verifies requestID-based deduplication
+// after the transition gate stops legacy execution-state writes.
+func (s *UpdateWorkflowSdkSuite) TestUpdateSameRequestIDDeduplicatesCallbacksCHASMOnly() {
+	s.testUpdateSameRequestIDDeduplicatesCallbacks(true)
+}
+
+// The update blocks (stays in stateAccepted), then:
 //   - A second request with the same requestID is deduped (no new callback).
 //   - A third request with a different requestID creates an additional callback.
 //
 // The workflow should end up with exactly 2 update callbacks (from requestID1 and requestID2).
-func (s *UpdateWorkflowSdkSuite) TestUpdateSameRequestIDDeduplicatesCallbacks() {
+func (s *UpdateWorkflowSdkSuite) testUpdateSameRequestIDDeduplicatesCallbacks(chasmOnlyRequestIDStorage bool) {
 	env := testcore.NewEnv(s.T(),
 		testcore.WithDynamicConfig(dynamicconfig.EnableChasm, true),
 		testcore.WithDynamicConfig(dynamicconfig.EnableCHASMCallbacks, true),
 		testcore.WithDynamicConfig(dynamicconfig.EnableWorkflowUpdateCallbacks, true),
+		testcore.WithDynamicConfig(
+			dynamicconfig.EnableCHASMOnlyUpdateCallbackRequestIDs,
+			chasmOnlyRequestIDStorage,
+		),
 		testcore.WithDynamicConfig(
 			callback.AllowedAddresses,
 			[]any{map[string]any{"Pattern": "localhost:9999", "AllowInsecure": true}},
@@ -473,6 +490,21 @@ func (s *UpdateWorkflowSdkSuite) TestUpdateSameRequestIDDeduplicatesCallbacks() 
 		}
 	}
 	s.Equal(2, updateCallbackCount, "expected 2 callbacks: requestID1 (original) + requestID2 (new), with duplicate requestID1 deduped")
+
+	mutableState, err := env.AdminClient().DescribeMutableState(s.Context(), &adminservice.DescribeMutableStateRequest{
+		Namespace: env.Namespace().String(),
+		Execution: &commonpb.WorkflowExecution{WorkflowId: run.GetID()},
+		Archetype: chasm.WorkflowArchetype,
+	})
+	s.NoError(err)
+	requestIDs := mutableState.GetDatabaseMutableState().GetExecutionState().GetRequestIds()
+	if chasmOnlyRequestIDStorage {
+		s.NotContains(requestIDs, requestID1)
+		s.NotContains(requestIDs, requestID2)
+	} else {
+		s.Contains(requestIDs, requestID1)
+		s.Contains(requestIDs, requestID2)
+	}
 
 	// Clean up.
 	s.NoError(env.SdkClient().SignalWorkflow(s.Context(), run.GetID(), run.GetRunID(), "complete-update", nil))
