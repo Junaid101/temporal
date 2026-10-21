@@ -20,13 +20,16 @@ func TestNexusStage(t *testing.T) {
 		req    any
 		want   []tag.Tag
 	}{
-		{method: api.HistoryServicePrefix + "CompleteNexusOperation", want: []tag.Tag{tag.NexusStageCallerInbound}},
-		{method: api.HistoryServicePrefix + "CompleteNexusOperationChasm", want: []tag.Tag{tag.NexusStageCallerInbound}},
-		{method: api.NexusServicePrefix + "CompleteNexusOperation", want: []tag.Tag{tag.NexusStageCallerInbound}},
+		// Handler Inbound
 		{method: api.HistoryServicePrefix + "StartNexusOperation", want: []tag.Tag{tag.NexusStageHandlerInbound}},
 		{method: api.HistoryServicePrefix + "CancelNexusOperation", want: []tag.Tag{tag.NexusStageHandlerInbound}},
 		{method: api.NexusServicePrefix + "DispatchByEndpoint", want: []tag.Tag{tag.NexusStageHandlerInbound}},
 		{method: api.NexusServicePrefix + "DispatchByNamespaceAndTaskQueue", want: []tag.Tag{tag.NexusStageHandlerInbound}},
+		// Caller Inbound
+		{method: api.HistoryServicePrefix + "CompleteNexusOperation", want: []tag.Tag{tag.NexusStageCallerInbound}},
+		{method: api.HistoryServicePrefix + "CompleteNexusOperationChasm", want: []tag.Tag{tag.NexusStageCallerInbound}},
+		{method: api.NexusServicePrefix + "CompleteNexusOperation", want: []tag.Tag{tag.NexusStageCallerInbound}},
+		// No stage
 		{method: api.WorkflowServicePrefix + "StartWorkflowExecution"},
 		// Standalone operation APIs are client RPCs, not part of a Nexus call's lifecycle.
 		{method: api.WorkflowServicePrefix + "StartNexusOperationExecution"},
